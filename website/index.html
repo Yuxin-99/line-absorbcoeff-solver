@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Atmosphere Absorption Coefficient Visualization</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="https://www.w3schools.com/w3css/4/w3.css">
+<link rel="stylesheet" href="css/main.css">
+<link rel="stylesheet" href="css/menu.css">
+<!-- <link rel="stylesheet" href="css/ingredients.css"> -->
+<!-- <link rel="stylesheet" href="css/country.css"> -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inconsolata">
+<style>
+body, html {height: 100%}
+body,h1,h2,h3,h4,h5,h6 {font-family: "Inconsolata", sans-serif}
+.bgimg {
+    background-repeat: no-repeat;
+    background-size: cover;
+    background-image: url("imgs/atm.png");
+    min-height: 85%;
+}
+</style>
+<script src="https://d3js.org/d3.v5.min.js"></script>
+  <script src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>
+</head>
+<body>
+
+<!-- Navigation bar (sit on top) -->
+<div class="w3-top w3-hide-small">
+  <div class="w3-bar w3-xlarge w3-black w3-opacity w3-hover-opacity-off" id="bar">
+    <a href="#home" class="w3-bar-item w3-button">HOME</a>
+    <a href="#about" class="w3-bar-item w3-button">ABOUT</a>
+    <a href="#theory" class="w3-bar-item w3-button">THEORY</a>
+    <a href="#Absorbcoeff" class="w3-bar-item w3-button">AbsorbCoeff</a>
+    <a href="#Line strength" class="w3-bar-item w3-button">LineStrength</a>
+    <a href="#Broadening" class="w3-bar-item w3-button">Broadening</a>
+  </div>
+</div>
+
+<!-- Header with image -->
+<header class="bgimg w3-display-container" id="home">
+  <div class="w3-display-middle w3-center">
+    <span class="w3-text-white w3-hide-small" style="font-size:100px">Atmosphere Gas<br>Absorption Coefficient</span>
+  </div>
+</header>
+
+
+<!-- About Container -->
+<div class="w3-container" id="about">
+  <div class="w3-content" style="max-width:700px">
+    <h5 class="w3-center w3-padding-64"><span class="tag w3-wide">ABOUT</span></h5>
+    <p>Simulating the atmosphere is a hard challenge given by the complex processes that happen inside of it. Specifically, atmospheric gases are responsible for absorbing the light coming from the sun, but accounting for this process poses some challenges during simulation as they exhibit a high-oscillatory shape in the spectral domain. Furthermore, measured data of those molecules need to be translated to the absorption coefficient which is used for the simulation (specific solvers are needed for this purpose as Radis).</p>
+    <p>Gas absorption involves both spectral lines (line absorption) and continua (continuum absorption). Continua can be either physically meaningful or empirical corrections for line-by-line calculations. Their magnitude depends on the specific setup of the line-by-line calculation. Hence, combining continua and line absorptions effectively requires expertise. In this project, we mainly focus on the line absorption.</p>
+    <p>According to "The Atmospheric Radiative Transfer Simulator" (ARTS), the absorption coefficient can be computed by the formula <span>\(\alpha(\nu) = nS(T)F(\nu)\)</span> </p>
+  </div>
+</div>
+
+<div class="w3-container" id="theory">
+  <div class="w3-content" style="max-width:700px">
+    <h5 class="w3-center w3-padding-64"><span class="tag w3-wide">THEORY</span></h5>
+    <p>According to "The Atmospheric Radiative Transfer Simulator" (ARTS), the absorption coefficient of some gas can be computed by the formula <span>\(\alpha(\nu) = nS(T)F(\nu)\)</span>. </p>
+    <ul>
+      <li><b>\alpha </b>: the absorption coefficient</li>
+      <li><b>\nu </b>: the frequency of the line</li>
+      <li><b>n</b>: the number density of the gas molecule (number of absorbing particles per volume unit)</li>
+      <li><b>S</b>: the line strength; <b>T</b>: the temperature</li>
+      <li><b>F(\nu) </b>: the line shape function</li>
+    </ul>
+  </div>
+</div>
+
+<!-- Ingredients Container -->
+<div class="w3-container" id="Absorbcoeff">
+  <div class="w3-content" style="max-width:700px">
+    <h5 class="w3-center w3-padding-64"><span class="tag w3-wide">Nutrient ingredients in different food</span></h5>
+    <p style="font-size: 16px">Visualization of food ingredients.</p>
+
+    <!--script>
+      let svg = d3.select("svg");
+      let circles2 = svg.selectAll("circle")
+                        .data([10, 20, 50, 100])
+                        .enter()
+                        .append('circle')
+                          .attr('cx', (d, i) => 100 * (i + 1))
+                          .attr('cy', (d, i) => 100 * (i + 1))
+                          .attr('r', d => d)
+                          .style("fill", "blue");
+    </script-->
+
+    <p></p>
+  </div>
+</div>
+
+<!-- Menu Container -->
+<div class="w3-container" id="Line strength">
+  <div class="w3-content" style="max-width:700px">
+    <h5 class="w3-center w3-padding-64"><span class="tag w3-wide">Different diet menus</span></h5>
+    <div class="w3-center">
+      <h3>Vegan Diet Recipe:</h3>
+      <img src="imgs/menu.jpg" width="800px" height=auto>
+    </div>
+
+    <!-- pagination elements -->
+    <div class="w3-center">
+      <div class="pagination">
+        <a href="#"><<</a>
+        <a href="#" title="Loose weight">1</a>
+        <a href="#" title="Asian">2</a>
+        <a href="#" title="High Protein">3</a>
+        <a href="#" title="Vegan" class="active">4</a>
+        <a href="#" title="Gluten Free">5</a>
+        <a href="#">>></a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Country Container -->
+
+
+<div class="w3-container" id="Broadening">
+  <div class="w3-content" style="max-width:700px">
+    <h5 class="w3-center w3-padding-64"><span class="tag w3-wide">WORLDWIDE FOOD PRODUCTION</span></h5>
+    <p>Visualization of Country Production</p>
+    <img src="imgs/world.jpg" width="800px" height=auto>
+  </div>
+</div>
+
+
+</body>
+</html>
