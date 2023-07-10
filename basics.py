@@ -1,6 +1,6 @@
-'''
+"""
 Code based on Radis Source code "radis.lbl.base", "radis.lbl.factory"
-'''
+"""
 
 import drjit as dr
 import mitsuba as mi
