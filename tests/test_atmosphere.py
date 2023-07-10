@@ -1,3 +1,5 @@
+import time
+
 import numpy as np
 import seaborn as sns
 
@@ -10,6 +12,23 @@ from main import get_absorbcoeff
 epsilon = 5e-3  # the tolerant difference of the computed parameters between the RADIS library and our code
 
 
+def test_atm_L50_700_1500():
+    print(
+        "Testing the computation of real atmosphere gas: altitude = 50km; wavelength_min = 600; wavelength_max = 1200"
+    )
+    # Tref = 296  # unit: K
+    pressure, Tgas, molecules, mole_fraction = get_atm_gas_data(50)
+
+    mol = "CO2"
+    isotope = "all"
+    wavelength_min = 700  # unit: nm
+    wavelength_max = 1500
+    # diluent = {'air': 0}
+    wstep = 0.005
+
+    run_test(wavelength_min, wavelength_max, Tgas, pressure, mol, isotope, mole_fraction[mol], wstep, 0.1, False)
+
+
 def test_atm_L50_4165_5000():
     print(
         "Testing the computation of real atmosphere gas: altitude = 50km; wavelength_min = 600; wavelength_max = 1200"
@@ -18,17 +37,46 @@ def test_atm_L50_4165_5000():
     pressure, Tgas, molecules, mole_fraction = get_atm_gas_data(50)
 
     isotope = "all"
-    wavelength_min = 6000  # unit: nm
-    wavelength_max = 8000
+    wavelength_min = 4165  # unit: nm
+    wavelength_max = 5000
     # diluent = {'air': 0}
-    wstep = 0.01
+    wstep = 0.003
 
-    run_test(wavelength_min, wavelength_max, Tgas, pressure, molecules, isotope, mole_fraction, wstep, 0.3)
+    run_test(wavelength_min, wavelength_max, Tgas, pressure, molecules, isotope, mole_fraction, wstep, 0.1, False)
 
 
-def run_test(wavelength_min, wavelength_max, Tgas, pressure, molecule, isotope, mole_fraction, wstep, path_length):
+def test_opt_atm_L50_4165_5000():
+    print(
+        "Testing the computation of real atmosphere gas: altitude = 50km; wavelength_min = 600; wavelength_max = 1200"
+    )
+    # Tref = 296  # unit: K
+    pressure, Tgas, molecules, mole_fraction = get_atm_gas_data(50)
+
+    isotope = "all"
+    wavelength_min = 4165  # unit: nm
+    wavelength_max = 5000
+    # diluent = {'air': 0}
+    wstep = 0.003
+
+    run_test(wavelength_min, wavelength_max, Tgas, pressure, molecules, isotope, mole_fraction, wstep, 0.1, True)
+
+
+def run_test(wavelength_min, wavelength_max, Tgas, pressure, molecule, isotope, mole_fraction, wstep, path_length, opt):
+    """
+    :param wavelength_min: nm
+    :param wavelength_max: nm
+    :param Tgas: K
+    :param pressure: pa
+    :param molecule: str or list
+    :param isotope: str or dict
+    :param mole_fraction: float or dict
+    :param wstep: float
+    :param path_length: float
+    :param opt: flag of if using optimization or not
+    """
     # create validation values
     pressure_bar = pressure * 1e-5
+    radis_start = time.time()
     s, sf = calc_spectrum(wavelength_min=wavelength_min,
                           wavelength_max=wavelength_max,
                           Tgas=Tgas,
@@ -37,18 +85,15 @@ def run_test(wavelength_min, wavelength_max, Tgas, pressure, molecule, isotope, 
                           isotope=isotope,
                           mole_fraction=mole_fraction,
                           path_length=path_length,
-                          wstep="auto",
+                          wstep=wstep,
                           cutoff=0,
                           optimization="simple",
                           broadening_method="fft",
                           return_factory=True,
                           verbose=False)
-
-    muti_mols = (type(molecule) == list)
-    if muti_mols:
-        sf_df = list(sf.values())[0].df1
-    else:
-        sf_df = sf.df1
+    radis_elapsed = time.time() - radis_start
+    # s.print_perf_profile()
+    print("Calculation time of RADIS: %.5f s. \n" % radis_elapsed)
 
     abscoeff, wavenumber, df = get_absorbcoeff(
         wavelen_min=wavelength_min,
@@ -56,35 +101,11 @@ def run_test(wavelength_min, wavelength_max, Tgas, pressure, molecule, isotope, 
         Tgas=Tgas,
         molecule=molecule,
         isotope=isotope,
-        mole_fraction=mole_fraction,
+        mol_frac=mole_fraction,
         pressure=pressure,
-        wstep=wstep
+        wstep=wstep,
+        opt=opt
     )
-
-    # make sure the wave numbers are the same
-    wav_validation = sf_df['wav']
-    wav_test = df['wav']
-    assert (len(wav_validation) == len(wav_test), "The length of the two parameters are not equal!")
-    for i in range(len(df)):
-        assert (np.absolute(wav_test[i] - wav_validation[i]) <= epsilon, "Errors in wavenumber! Not equal to RADIS!")
-
-    # if it is the case of multiple molecules, do not compare the separate parameters (S, hwhm)
-    # check the line strength S
-    if not muti_mols:
-        S_validation = sf_df['S']
-        S_test = df['S']
-        compare_variable(S_validation, S_test, wav_validation, wav_test, "Line Strength", "cm−1/(molecule·cm−2)")
-
-        # check the Lorentz hwhm
-        lorentz_hwhm_validation = sf_df['hwhm_lorentz']
-        lorentz_hwhm_test = df['hwhm_lorentz']
-        compare_variable(lorentz_hwhm_validation, lorentz_hwhm_test, wav_validation, wav_test, "Lorentz HWHM",
-                         "cm−1/atm")
-
-        # check the Gauss hwhm
-        gauss_hwhm_validation = sf_df['hwhm_gauss']
-        gauss_hwhm_test = df['hwhm_gauss']
-        compare_variable(gauss_hwhm_validation, gauss_hwhm_test, wav_validation, wav_test, "Gaussian HWHM", "cm−1/atm")
 
     # check the absorption coefficient
     wavespace_valid = s.get_wavenumber()

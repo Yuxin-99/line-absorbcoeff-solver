@@ -1,7 +1,11 @@
+"""
+Code based on Radis Source code "radis.lbl.loader"
+"""
+
 import numpy as np
 import pandas as pd
 
-from os.path import exists, expanduser, join, splitext
+from os.path import join
 from warnings import warn
 
 from air import air2vacuum
@@ -149,13 +153,8 @@ def load_hitran(
         parfuncfmt="hapi",
         # levels=None,
         # levelsfmt="radis",
-        load_energies=False,
-        include_neighbouring_lines=False,
-        # parse_local_global_quanta=True,
         drop_non_numeric=True,
         db_use_cached=True,
-        # lvl_use_cached=True,
-        # memory_mapping_engine="default",
         load_columns="equilibrium",
         parallel=True,
         extra_params=None,
@@ -238,6 +237,7 @@ def load_hitran(
             If you are calculating equilibrium (LTE) spectra, it is recommended to
             use ``'equilibrium'``. If you are calculating non-LTE spectra, it is
             recommended to use ``'noneq'``.
+    drop_column": flag to indicate if drop unnecessary columns (id, iso, etc.) or not
     Notes
     -----
     HITRAN is fetched with Astroquery [1]_ or [HAPI]_,  and HITEMP with
@@ -260,23 +260,6 @@ def load_hitran(
     # Get inputs
     if not molecule:
         raise ValueError("Please define `molecule=` so the database can be fetched")
-
-    # if include_neighbouring_lines:
-    #     wavenum_min = self.params.wavenum_min_calc
-    #     wavenum_max = self.params.wavenum_max_calc
-    # else:
-    #     wavenum_min = self.input.wavenum_min
-    #     wavenum_max = self.input.wavenum_max
-
-    # Let's store all params so they can be parsed by "get_conditions()"
-    # and saved in output spectra information
-    # self.params.dbformat = dbformat
-    # self.misc.load_energies = load_energies
-    # self.levels = levels
-    # self.params.levelsfmt = levelsfmt
-    # self.params.parfuncpath = format_paths(parfunc)
-    # self.params.parfuncfmt = parfuncfmt
-    # self.params.db_use_cached = db_use_cached
 
     # Which columns to load
     columns = []
@@ -333,7 +316,7 @@ def load_hitran(
             )
             # self.params.dbpath = ",".join(local_paths)
 
-            # ... explicitely write all isotopes based on isotopes found in the database
+            # ... explicitly write all isotopes based on isotopes found in the database
             if isotope == "all":
                 isotope = ",".join(
                     [str(k) for k in _get_isotope_list(isotope, df=df)]
@@ -383,23 +366,16 @@ def load_hitran(
         raise NotImplementedError("source: {0}".format(source))
 
     if len(df) == 0:
-        raise ValueError(
-            f"{molecule} has no lines on range "
-            + "{0:.2f}-{1:.2f} cm-1".format(wavenum_min, wavenum_max)
-        )
+        # raise ValueError(
+        #     f"{molecule} has no lines on range "
+        #     + "{0:.2f}-{1:.2f} cm-1".format(wavenum_min, wavenum_max)
+        # )
+        print(f"Warning!! {molecule} has no lines on range " + "{0:.2f}-{1:.2f} cm-1".format(wavenum_min, wavenum_max))
+        # then if no data for this molecule, should skip all the computation
+        return df
 
     # Always sort line database by wavenumber (required to SPARSE_WAVERANGE mode)
     df.sort_values("wav", ignore_index=True, inplace=True)
-
-    # Post-processing of the line database
-    # (note : this is now done in 'fetch_hitemp' before saving to the disk)
-    # spectroscopic quantum numbers will be needed for nonequilibrium calculations, and line survey.
-    # if parse_local_global_quanta and "locu" in df and source != "geisa":
-    #     df = parse_local_quanta(df, molecule, verbose=self.verbose)
-    # if (
-    #         parse_local_global_quanta and "globu" in df and source != "geisa"
-    # ):  # spectroscopic quantum numbers will be needed for nonequilibrium calculations :
-    #     df = parse_global_quanta(df, molecule, verbose=self.verbose)
 
     # Remove non numerical attributes
     if drop_non_numeric:
@@ -407,41 +383,10 @@ def load_hitran(
             replace_PQR_with_m101(df)
         df = drop_object_format_columns(df)
 
-    # self.df0 = df  # type : pd.DataFrame
-    # self.misc.total_lines = len(df)  # will be stored in Spectrum metadata
-
-    # %% Init Partition functions (with energies)
-    # ------------
-
-    # if parfuncfmt == "exomol":
-    #     self._init_equilibrium_partition_functions(
-    #         parfunc,
-    #         parfuncfmt,
-    #         # predefined_partition_functions=partition_function_exomol,
-    #     )
-    # else:
-    #     self._init_equilibrium_partition_functions(parfunc, parfuncfmt)
-
-    # If energy levels are given, initialize the partition function calculator
-    # (necessary for non-equilibrium). If levelsfmt == 'radis' then energies
-    # are calculated ab initio from radis internal species database constants
-    # if load_energies:
-    #     try:
-    #         self._init_rovibrational_energies(levels, levelsfmt)
-    #     except KeyError as err:
-    #         print(err)
-    #         raise KeyError(
-    #             "Error while fetching rovibrational energies for "
-    #             + "{0}, iso={1} in RADIS built-in spectroscopic ".format(
-    #                 molecule, isotope
-    #             )
-    #             + "constants (see details above). If you only need "
-    #             + "equilibrium spectra, try using 'load_energies=False' "
-    #             + "in fetch_databank"
-    #         )
     #
     # TODO: MIGHT cause some issue if not removing id & isotope column
-    remove_unecessary_columns(df)
+    if drop_column:
+        remove_unecessary_columns(df)
 
     return df
 

@@ -1,9 +1,13 @@
-import matplotlib as plt
+"""
+Code based on Radis Source code "radis.lbl.factory", "radis.lbl.base"
+"""
+
+import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 import time
 
-from basics import get_molecule_identifier, Tref, pressure_atm, generate_wavenumber_range, get_molar_mass
+from basics import get_molecule_identifier, Tref, generate_wavenumber_range, get_molar_mass
 from broadening import calc_lorentz_hwhm, calc_gauss_hwhm, calc_lineshape_LDM, apply_lineshpe_LDM, calc_continuum_absorb
 from constants import c_2, k_b
 from loader import load_hitran
@@ -136,7 +140,7 @@ def get_spectrum(
         isotope="all",
         mole_fraction=1.0,
         diluent="air",
-        pressure=pressure_atm,
+        pressure=1.01325,
         wstep=0.01,
         # optimization="simple",
         # broadening_method="fft"
@@ -145,13 +149,14 @@ def get_spectrum(
     :param wmin: the minimum wavenumber, unit: cm-1
     :param wmax: the maximum wavenumber, unit: cm-1
     :param Tgas: the temperature, unit: K
-    :param molecule: the queried molecule(s)
-    :param isotope: the queried isotope(s)
-    :param mole_fraction: the fraction of molecule(s)
-    :param diluent: the dieluent, default (and for now only as) air
+    :param molecule: the queried molecule(s), str or list
+    :param isotope: the queried isotope(s), str or dict
+    :param mole_fraction: the fraction of molecule(s), float or dict
+    :param diluent: the diluent, default (and for now only as) air
     :param pressure: the total gas pressure, unit: bar
 
     """
+    start_time = time.time()
 
     pressure_mbar = pressure * 1e3
 
@@ -170,7 +175,7 @@ def get_spectrum(
             else:
                 molecule_dict[mol]["iso"] = isotope[mol]
     else:
-        assert (type(isotope) == str)
+        assert (isinstance(isotope, str))
         for mol in molecule:
             molecule_dict[mol]["iso"] = isotope  # every molecule has the same isotope
 
@@ -181,25 +186,26 @@ def get_spectrum(
 
     if len(molecule) != 1 and type(mole_fraction) != dict:
         raise Exception("When given multiple molecules, please provide the exact mol_fraction of each molecule!!!")
-    elif len(molecule) == 1 and (type(mole_fraction) == float or type(mole_fraction) == int):
+    elif len(molecule) == 1 and (isinstance(mole_fraction, int) or isinstance(mole_fraction, float)):
         molecule_dict[molecule[0]]["mol_fraction"] = mole_fraction
-        diluent_fraction = 1.0 - mole_fraction
-        diluent = {"air": diluent_fraction}
+        # diluent_fraction = 1.0 - mole_fraction
+        # diluent = {"air": diluent_fraction}
     else:
-        mol_frac_sum = 0.0
+        # mol_frac_sum = 0.0
         for mol in molecule:
             if mol not in mole_fraction.keys():
                 raise Exception("Error: Missing mole fraction input for the molecule " + mol + "!!!")
             else:
                 molecule_dict[mol]["mol_fraction"] = mole_fraction[mol]
-                mol_frac_sum += mole_fraction[mol]
-        diluent_fraction = 1.0 - mol_frac_sum
-        diluent = {"air": diluent_fraction}
+                # mol_frac_sum += mole_fraction[mol]
+        # diluent_fraction = 1.0 - mol_frac_sum
+        # diluent = {"air": diluent_fraction}
 
     # loop through all the molecules
     abscoeff_res = 0.0
     perf_dict_list = []
     for mol in molecule_dict.keys():
+        diluent = {"air": 1.0 - molecule_dict[mol]["mol_fraction"]}
         abscoeff, wave_number, df, perf_dict = calc_molecule_eq_spectrum(
             Tgas,
             pressure_mbar,
@@ -219,7 +225,8 @@ def get_spectrum(
     # if "H2O" in molecule_dict.keys():
     #     abscoeff_res += calc_continuum_absorb(wave_number, mole_fraction["H2O"], pressure)
 
-    print_perf(perf_dict_list)
+    total_time = time.time() - start_time
+    print_perf(perf_dict_list, total_time)
 
     # the df here is just the dataframe of the last molecule, might not be used for testing when there are multiple molecules
     return abscoeff_res, wave_number, df
@@ -236,7 +243,6 @@ def calc_molecule_eq_spectrum(
         wavenum_max,
         wstep
 ):
-    # df = load_df(file, wavenum_min, wavenum_max, isotope, True, True)
     df = load_hitran(
         wavenum_min=wavenum_min,
         wavenum_max=wavenum_max,
@@ -244,7 +250,13 @@ def calc_molecule_eq_spectrum(
         isotope=isotope,
     )
 
-    perf_dict = {}
+    wavenumber, wavenumber_calc, woutrange = generate_wavenumber_range(wavenum_min, wavenum_max, wstep)
+
+    perf_dict = {"Line strength": 0.0, "Line Shift": 0.0, "Lorentz hwhm": 0.0, "Gaussian hwhm": 0.0,
+                 "Calculate line profile LDM": 0.0, "Apply LDM": 0.0}
+    if len(df) == 0:
+        # TODO: when no data for this molecule, should deal carefully with the related return vals
+        return 0.0, wavenumber, df, perf_dict
 
     # df['S'], unit: cm−1/(molecule·cm−2)
     S_time = calc_linestrength(df, Tgas, molecule)
@@ -253,16 +265,16 @@ def calc_molecule_eq_spectrum(
     perf_dict["Line Shift"] = shift_time
 
     molar_mass = get_molar_mass(df)  # g/mol
-    lorentz_hwhm_time = calc_lorentz_hwhm(df, Tgas, diluent, mole_fraction)
+    pressure_atm = pressure_mbar / 1013.25
+    lorentz_hwhm_time = calc_lorentz_hwhm(df, Tgas, diluent, mole_fraction, pressure_atm)
     perf_dict["Lorentz hwhm"] = lorentz_hwhm_time
     gauss_hwhm_time = calc_gauss_hwhm(df, Tgas, molar_mass)
     perf_dict["Gaussian hwhm"] = gauss_hwhm_time
 
     # calculate the broadening (line shapes)
-    wavenumber, wavenumber_calc, woutrange = generate_wavenumber_range(wavenum_min, wavenum_max, wstep)
     line_profile_LDM, wL, wG, wL_dat, wG_dat, calc_ldm_time = calc_lineshape_LDM(df, wstep, wavenumber_calc)
     perf_dict["Calculate line profile LDM"] = calc_ldm_time
-    # commpute S * F, unit of the convolution result: 1/(molecule·cm−2)
+    # compute S * F, unit of the convolution result: 1/(molecule·cm−2)
     sumoflines, apply_time = apply_lineshpe_LDM(
         df['S'],
         wavenumber,
@@ -277,9 +289,6 @@ def calc_molecule_eq_spectrum(
         wG_dat
     )
     perf_dict["Apply LDM"] = apply_time
-    perf_dict["total"] = 0.0
-    for key in perf_dict:
-        perf_dict["total"] += perf_dict[key]
 
     # incorporate density of molecules (number of absorbing particles / cm³)
     # mole_fraction is the weight of the abscoeff of this molecule
@@ -291,7 +300,7 @@ def calc_molecule_eq_spectrum(
     return abscoeff, wavenumber, df, perf_dict
 
 
-def print_perf(perf_dict_list):
+def print_perf(perf_dict_list, total_time):
     TAB = 4
 
     perf_sum_dict = {}
@@ -302,10 +311,9 @@ def print_perf(perf_dict_list):
         for perf_dict in perf_dict_list:
             perf_sum_dict[key] += perf_dict[key]
 
-    print("Calculation time of the absorption coefficient: %.5f s. \n" % perf_sum_dict["total"])
+    print("Calculation time of the absorption coefficient (non optimization): %.5f s. \n" % total_time)
     for key, value in perf_sum_dict.items():
-        if key != "total":
-            print(" " * TAB + key + ": %.5f s. \n" % value)
+        print(" " * TAB + key + ": %.5f s. \n" % value)
 
 
 def plot_absorb_coeff(x, y, x_label, y_label, title, smooth_window_size=5):

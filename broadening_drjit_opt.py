@@ -1,69 +1,66 @@
-"""
-Code based on Radis Source code "radis.lbl.broadening"
-"""
-
+import drjit as dr
+import mitsuba as mi
 import numpy as np
+import pyfftw
 import time
-import tracemalloc
 
 from basics import get_indices, Tref
-from constants import Na, k_b_CGS, c_CGS, THETA, C_O_H2O, n_s, C_O_d, n_d
+from constants import Na, k_b_CGS, c_CGS
 
 
-def lorentzian_step(res_L):
-    log_pL = np.log((res_L / 0.20) ** 0.5 + 1)
+def lorentzian_step_opt(res_L):
+    log_pL = dr.log(dr.sqrt((res_L / 0.20)) + 1)
     return log_pL
 
 
-def gaussian_step(res_G):
-    log_pG = np.log((res_G / 0.46) ** 0.5 + 1)
+def gaussian_step_opt(res_G):
+    log_pG = dr.log(dr.sqrt((res_G / 0.46)) + 1)
     return log_pG
 
 
-dxL = lorentzian_step(0.01)
-dxG = gaussian_step(0.01)
+dxL = lorentzian_step_opt(0.01)
+dxG = gaussian_step_opt(0.01)
 
 
 # compute HWHM (half width at half of the maximum, gamma in ARTS) for lineshape later
-def calc_lorentz_hwhm(df, Tgas, diluent, mole_fraction, pressure_atm):
+def calc_lorentz_hwhm_opt(dfcolumn_dict, Tgas, diluent, mole_fraction, pressure_atm):
     start = time.time()
-    diluent_molecules = diluent.keys()
+    # diluent_molecules = diluent.keys()
 
     gamma_lb = 0
 
     # Adding air coefficient
-    if "air" in diluent_molecules:
-        gamma_lb += ((Tref / Tgas) ** df.Tdpair) * (
-            (df.airbrd * pressure_atm * diluent["air"])
+    if "air" in diluent:
+        gamma_lb += dr.power(Tref / Tgas, dfcolumn_dict["Tdpair"]) * (
+            (dfcolumn_dict["airbrd"] * pressure_atm * dfcolumn_dict["diluent_frac"])
         )
 
     # Adding self coefficient
     # Check self broadening is here
-    if not "Tdpsel" in list(df.keys()):
+    if "Tdpsel" not in dfcolumn_dict.keys():
         Tdpsel = None  # if None, voigt_broadening_HWHM uses df.Tdpair
     else:
-        Tdpsel = df.Tdpsel
+        Tdpsel = dfcolumn_dict["Tdpsel"]
 
-    if not "selbrd" in list(df.keys()):
-        selbrd = df.airbrd
+    if "selbrd" not in dfcolumn_dict.keys():
+        selbrd = dfcolumn_dict["airbrd"]
     else:
-        selbrd = df.selbrd
+        selbrd = dfcolumn_dict["selbrd"]
 
     if Tdpsel is None:  # use Tdpair instead
-        gamma_lb += ((Tref / Tgas) ** df.Tdpair) * (
+        gamma_lb += dr.power(Tref / Tgas, dfcolumn_dict["Tdpair"]) * (
             (selbrd * pressure_atm * mole_fraction)
         )
     else:
-        gamma_lb += ((Tref / Tgas) ** Tdpsel) * (
+        gamma_lb += dr.power(Tref / Tgas, Tdpsel) * (
                 selbrd * pressure_atm * mole_fraction
         )
 
-    df['hwhm_lorentz'] = gamma_lb
     elapsed = time.time() - start
-    return elapsed
+    return gamma_lb, elapsed
 
 
-def calc_lorentz_ft(w_centered, hwhm_lorentz):
+def calc_lorentz_ft_opt(w_centered, hwhm_lorentz):
     r"""Fourier Transform of a Lorentzian lineshape.
 
         .. math::
@@ -86,23 +83,22 @@ def calc_lorentz_ft(w_centered, hwhm_lorentz):
         :py:func:`~radis.lbl.broadening.lorentzian_lineshape`
         """
 
-    lorentz = np.exp(-2 * np.pi * w_centered * hwhm_lorentz)            # use Dr.Git's vectorization
+    lorentz = dr.exp(-2 * dr.pi * w_centered * hwhm_lorentz)  # use Dr.Git's vectorization
     return lorentz
 
 
-def calc_gauss_hwhm(df, Tgas, molar_mass):
+def calc_gauss_hwhm_opt(dfcolumn_dict, Tgas, molar_mass):
     start = time.time()
-    wav = df.wav
-    gamma_doppler = (wav / c_CGS) * np.sqrt(
-        (2 * Na * k_b_CGS * Tgas * np.log(2)) / molar_mass
+    wav = dfcolumn_dict["wav"]
+    gamma_doppler = (wav / c_CGS) * dr.sqrt(
+        (2 * Na * k_b_CGS * Tgas * dr.log(2)) / molar_mass
     )
 
-    df['hwhm_gauss'] = gamma_doppler
     elapsed = time.time() - start
-    return elapsed
+    return gamma_doppler, elapsed
 
 
-def calc_gauss_ft(w_centered, hwhm_gauss):
+def calc_gauss_ft_opt(w_centered, hwhm_gauss):
     r"""Fourier Transform of a Gaussian lineshape.
 
         .. math::
@@ -124,15 +120,11 @@ def calc_gauss_ft(w_centered, hwhm_gauss):
         :py:func:`~radis.lbl.broadening.gaussian_lineshape`
         """
 
-    gauss = np.exp(-((2 * np.pi * w_centered * hwhm_gauss) ** 2) / (4 * np.log(2)))
+    gauss = dr.exp(-dr.sqr(2 * dr.pi * w_centered * hwhm_gauss) / (4 * dr.log(2)))
     return gauss
 
 
-def calc_lorentz_profile():
-    print("")
-
-
-def calc_voigt_ft(w_lineshape_ft, hwhm_gauss, hwhm_lorentz):
+def dr_calc_voigt_ft(w_lineshape_ft, hwhm_gauss, hwhm_lorentz):
     """Fourier Transform of a Voigt lineshape
 
         Parameters
@@ -151,12 +143,12 @@ def calc_voigt_ft(w_lineshape_ft, hwhm_gauss, hwhm_lorentz):
         :py:func:`~radis.lbl.broadening.lorentzian_FT`
         """
 
-    IG_FT = calc_gauss_ft(w_lineshape_ft, hwhm_gauss)
-    IL_FT = calc_lorentz_ft(w_lineshape_ft, hwhm_lorentz)
+    IG_FT = calc_gauss_ft_opt(w_lineshape_ft, hwhm_gauss)
+    IL_FT = calc_lorentz_ft_opt(w_lineshape_ft, hwhm_lorentz)
     return IG_FT * IL_FT
 
 
-def calc_lineshape_LDM(df, wstep, wavenumber_calc):
+def calc_lineshape_LDM_opt(dfcolumn_dict, w_lineshape_ft):
     """
     LDM: line density map (https://github.com/radis/radis/issues/37)
 
@@ -172,21 +164,24 @@ def calc_lineshape_LDM(df, wstep, wavenumber_calc):
     # ------------------------------------
 
     def _init_w_axis(w_dat, log_p):
-        w_min = w_dat.min()
+        # TODO: [0] makes the value python float but not mi.Float64 any problem?? same with len() function later
+        w_min = dr.min(w_dat)[0]
         if w_min == 0:
             print(" line(s) had a calculated broadening of 0 cm-1. Check the database. At least this line is faulty: \n\n")
-            w_min = w_dat[w_dat > 0].min()
+            # TODO: filter in drjit version
+            w_dat = dr.gather(mi.Float64, w_dat, dr.compress(w_dat > 0.0))
+            w_min = dr.min(w_dat)[0]
         w_max = (
-                w_dat.max() + 1e-4
-        )  # Add small number to prevent w_max falling outside of the grid
-        N = np.ceil((np.log(w_max) - np.log(w_min)) / log_p) + 1
-        return w_min * np.exp(log_p * np.arange(N))
+                dr.max(w_dat)[0] + 1e-4
+        )  # Add small number to prevent w_max falling outside the grid
+        N = dr.ceil((dr.log(w_max) - dr.log(w_min)) / log_p) + 1
+        return w_min * dr.exp(log_p * dr.arange(mi.UInt, N))
 
     log_pL = dxL  # LDM user params
     log_pG = dxG  # LDM user params
 
-    wL_dat = df.hwhm_lorentz.values * 2  # FWHM
-    wG_dat = df.hwhm_gauss.values * 2  # FWHM
+    wL_dat = dfcolumn_dict["hwhm_lorentz"] * 2  # FWHM
+    wG_dat = dfcolumn_dict["hwhm_gauss"] * 2  # FWHM
 
     wL = _init_w_axis(wL_dat, log_pL)  # FWHM
     wG = _init_w_axis(wG_dat, log_pG)  # FWHM
@@ -194,68 +189,85 @@ def calc_lineshape_LDM(df, wstep, wavenumber_calc):
     # Calculate the Lineshape
     # -----------------------
 
-    line_profile_LDM = {}
     # broadening_method = self.params.broadening_method         # only consider "fft" for now
     # Unlike real space methods ('convolve', 'voigt'), here we calculate
     # the lineshape on the full spectral range.
-    w = wavenumber_calc
-    w_lineshape_ft = np.fft.rfftfreq(
-        2 * len(w), wstep
-    )  # TO-DO: add  + self.misc.zero_padding
 
     # Get all combinations of Voigt lineshapes (in Fourier space)
-    tracemalloc.start()
-    for l in range(len(wG)):
-        line_profile_LDM[l] = {}
-        for m in range(len(wL)):
-            line_profile_LDM[l][m] = calc_voigt_ft(
-                w_lineshape_ft, wG[l] / 2, wL[m] / 2
-            )  # compute the effect of hwhm to the line shape in fourier space directly
+    wg_len = len(wG)
+    wl_len = len(wL)
+    w_lineshape_ft_len = len(w_lineshape_ft)
+    ''' do an outer product of w_lineshape_ft[w] and wG[len(wG)] to get [len(wg) x w] 2d array'''
+    # convert w_lineshape_ft to w_centered[len(wG) x w]
+    w_centered_wg = dr.tile(w_lineshape_ft, wg_len)
+    wg_ldm = dr.zeros(dr.llvm.ad.TensorXf64, [wg_len, w_lineshape_ft_len])
+    dr.scatter(target=wg_ldm.array, value=w_centered_wg,
+               index=dr.arange(mi.UInt, w_lineshape_ft_len * wg_len))
 
-            # normalization based on the fourier frequency of 0
-            line_profile_LDM[l][m] /= line_profile_LDM[l][m][0]
+    wg_tensor = dr.ones(dr.llvm.ad.TensorXf64, [wg_len, 1])
+    # TODO: check the mask of mi.Float64 here (gamma_lb in calc_lorentz_hwhm_opt)
+    dr.scatter(target=wg_tensor.array, value=mi.Float64(wG/2), index=dr.arange(mi.UInt, wg_len))
+    gauss_tensor = calc_gauss_ft_opt(wg_ldm, wg_tensor)  # shape: wg x w
 
-    current, peak = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
-    print("calc LDM in loops: current mem: %.6f mb; peak mem: %.6f mb" % (current / (1024 * 1024), peak / (1024 * 1024)))
+    ''' do an outer product of w_lineshape_ft[w] and wL[len(wL)] to get [len(wL) x w] 2d array'''
+    # convert w_lineshape_ft to w_centered[len(wG) x w]
+    # ToDO: check if the wl_len also needs to be in drjit type
+    w_centered_wl = dr.tile(w_lineshape_ft, wl_len)
+    wl_ldm = dr.zeros(dr.llvm.ad.TensorXf64, [wl_len, w_lineshape_ft_len])
+    dr.scatter(target=wl_ldm.array, value=w_centered_wl,
+               index=dr.arange(mi.UInt, w_lineshape_ft_len * wl_len))
+
+    wl_tensor = dr.ones(dr.llvm.ad.TensorXf64, [wl_len, 1])
+    dr.scatter(target=wl_tensor.array, value=mi.Float64(wL/2), index=dr.arange(mi.UInt, wl_len))
+    lorentz_tensor = calc_lorentz_ft_opt(wl_ldm, wl_tensor)  # shape: wl x w
+
+    '''stack the 2d tensor corresponding to lorentz and gauss to get a 3d tensor[wg x wl x w]'''
+    gauss_3d_tensor = dr.zeros(dr.llvm.ad.TensorXf64, [wg_len, wl_len, w_lineshape_ft_len])
+    arr1 = [midx * wl_len * w_lineshape_ft_len + ki for midx in range(wg_len) for ki in range(w_lineshape_ft_len)]
+    gauss_idx = [li * w_lineshape_ft_len + a for li in range(wl_len) for a in arr1]
+    dr.scatter(target=gauss_3d_tensor.array, value=dr.tile(gauss_tensor.array, wl_len), index=mi.UInt(gauss_idx))
+
+    lorentz_3d_tensor = dr.zeros(dr.llvm.ad.TensorXf64, [wg_len, wl_len, w_lineshape_ft_len])
+    dr.scatter(target=lorentz_3d_tensor.array, value=dr.tile(lorentz_tensor.array, wg_len),
+               index=dr.arange(mi.UInt, wg_len * wl_len * w_lineshape_ft_len))
+
+    line_profile_LDM = gauss_3d_tensor * lorentz_3d_tensor  # shape: wg x wl x w
+
+    normalize_factor = dr.ones(dr.llvm.ad.TensorXf64, (wg_len, wl_len, 1))
+    dr.scatter(normalize_factor.array, line_profile_LDM[:, :, 0].array, dr.arange(mi.UInt, wg_len * wl_len * 1))
+    line_profile_LDM /= normalize_factor
+
     elapsed = time.time() - start
     return line_profile_LDM, wL, wG, wL_dat, wG_dat, elapsed
 
 
-def add_at_ldm(LDM, k, l, m, I):
+def dr_add_at_ldm(LDM, k, l, m, I, wg_len, wl_len):
     """Add the linestrengths on the LDM grid.
 
-    Uses the numpy implementation of :py:func:`~numpy.add.at`, which
+    Uses the drjit implementation to realize :py:func:`~numpy.add.at`, which
     add arguments element-wise.
 
     Parameters
     ----------
-    LDM : ndarray
+    LDM : TensorXf64 []
         LDM grid
     k, l, m : array
         index
     I : array
         intensity to add
-
+    wg_len, wl_len: dimension of LDM
     Returns
     -------
     add: ndarray
         linestrengths distributed over the LDM grid
 
-    Notes
-    -----
-    Cython version implemented in https://github.com/radis/radis/pull/234
-
-    See Also
-    --------
-    :py:func:`numpy.add.at`
-
     """
     # print('Numpy add.at()')
-    return np.add.at(LDM, (k, l, m), I)
+    indices = mi.UInt(k * wg_len * wl_len + l * wl_len + m)
+    return dr.scatter_reduce(dr.ReduceOp.Add, LDM.array, I, indices)
 
 
-def apply_lineshpe_LDM(
+def apply_lineshape_LDM_opt(
         broadened_param,
         wavenumber,
         wavenumber_calc,
@@ -276,6 +288,8 @@ def apply_lineshpe_LDM(
         Series to apply lineshape to. Typically linestrength `S` for absorption,
     wavenumber: the spectral range vector, vector of wavenumbers (shape W)
     wavenumber_calc: the spectral range used for calculation
+    woutrange:
+    wstep:
     shifted_wavenum: (cm-1)     pandas Series (size N = number of lines)
         center wavelength (used to project broaded lineshapes )
     line_profile_LDM:  dict
@@ -293,10 +307,6 @@ def apply_lineshpe_LDM(
         FWHM of all lines. Used to lookup the LDM
     wG_dat: array    (size N)
         FWHM of all lines. Used to lookup the LDM
-    optimization :
-        if ``"min-RMS"`` weights optimized by analytical minimization of the RMS-error.
-        Otherwise, weights equal to their relative position in the grid.
-        Only consider the case of "simple" for now
 
     Returns
     -------
@@ -322,26 +332,17 @@ def apply_lineshpe_LDM(
     # Get spectrum range
     broadening_method = "fft"  # only consider the case of "fft" for now
 
-    # Get add-at method
-    # ... 1. allow user to use non-cython method (useful for tests ?)
-    # ... 2. write in the Spectrum object whether Cython was used or not
-    # ...    (either because deactivated, or because not installed)
-    # if self.use_cython and add_at != numpy_add_at:
-    #     _add_at = add_at
-    #     self.misc.add_at_used = "cython"
-    # else:
-    #     _add_at = numpy_add_at
-    #     self.misc.add_at_used = "numpy"
-    _add_at = add_at_ldm
+    _add_at = dr_add_at_ldm
     # Vectorize the chunk of lines
     S = broadened_param
 
     # ---------------------------
     # Apply line profile
-    # ... First get closest matching spectral point  (on the left, and on the right)
+    # ... First get the closest matching spectral point  (on the left, and on the right)
     #         ... @dev: np.interp about 30% - 50% faster than np.searchsorted
 
     # LDM : Next calculate how the line is distributed over the 2x2x2 bins.
+    # remark: since drjit doesn't have function like np.interp so still use the original version of get_indices
     ki0, ki1, tvi = get_indices(shifted_wavenum, wavenumber_calc)
     li0, li1, tGi = get_indices(np.log(wG_dat), np.log(wG))
     mi0, mi1, tLi = get_indices(np.log(wL_dat), np.log(wL))
@@ -360,60 +361,39 @@ def apply_lineshpe_LDM(
     awV11 = aGi * aLi
 
     Iv0 = S * (1 - avi)
-    Iv1 = S * avi   # interpolation of the line strength
+    Iv1 = S * avi  # interpolation of the line strength
+    wg_len = len(wG)
+    wl_len = len(wL)
 
     # ... Initialize array on which to distribute the lineshapes
     if broadening_method in ["voigt", "convolve"]:
         print("not considered ")
-        # if self.params.sparse_ldm == True:
-        #     # LDM is constructed in a sparse-way later
-        #     pass
-        # else:
-        #     LDM = np.zeros((len(wavenumber_calc) + 2, len(wG), len(wL)))
-        #     # +2 to allocate one empty grid point on each side : case where a line is on the boundary
-        #     ki0 += 1
-        #     ki1 += 1
     elif broadening_method == "fft":
-        # if self.params.sparse_ldm == True:
-        #     if self.verbose >= 2:
-        #         print(
-        #             "SPARSE optimisation not implemented with 'fft' mode. Use 'voigt' for analytical voigt, or radis.config['SPARSE_WAVERANGE'] = False"
-        #         )
-        LDM = np.zeros(
-            (
-                2 * len(wavenumber_calc),  # TO-DO: Add  + self.misc.zero_padding
-                len(wG),
-                len(wL),
-            )
-        )
+        LDM = dr.zeros(dr.llvm.ad.TensorXf64, [2 * len(wavenumber_calc), wg_len, wl_len])
     else:
         raise NotImplementedError(broadening_method)
 
     # Distribute all line intensities on the 2x2x2 bins.
-    _add_at(LDM, ki0, li0, mi0, Iv0 * awV00)
-    _add_at(LDM, ki0, li0, mi1, Iv0 * awV01)
-    _add_at(LDM, ki0, li1, mi0, Iv0 * awV10)
-    _add_at(LDM, ki0, li1, mi1, Iv0 * awV11)
-    _add_at(LDM, ki1, li0, mi0, Iv1 * awV00)
-    _add_at(LDM, ki1, li0, mi1, Iv1 * awV01)
-    _add_at(LDM, ki1, li1, mi0, Iv1 * awV10)
-    _add_at(LDM, ki1, li1, mi1, Iv1 * awV11)
+
+    _add_at(LDM, ki0, li0, mi0, Iv0 * awV00, wg_len, wl_len)
+    _add_at(LDM, ki0, li0, mi1, Iv0 * awV01, wg_len, wl_len)
+    _add_at(LDM, ki0, li1, mi0, Iv0 * awV10, wg_len, wl_len)
+    _add_at(LDM, ki0, li1, mi1, Iv0 * awV11, wg_len, wl_len)
+    _add_at(LDM, ki1, li0, mi0, Iv1 * awV00, wg_len, wl_len)
+    _add_at(LDM, ki1, li0, mi1, Iv1 * awV01, wg_len, wl_len)
+    _add_at(LDM, ki1, li1, mi0, Iv1 * awV10, wg_len, wl_len)
+    _add_at(LDM, ki1, li1, mi1, Iv1 * awV11, wg_len, wl_len)
 
     # All lines within each bins are convolved with the same lineshape.
     # ... Initialize array in FT space
+    line_profile_LDM = np.array(line_profile_LDM)
     Ildm_FT = 1j * np.zeros(len(line_profile_LDM[0][0]))
-    tracemalloc.start()
-    for l in range(len(wG)):
-        for m in range(len(wL)):
-            lineshape_FT = line_profile_LDM[l][m]
-            Ildm_FT += np.fft.rfft(LDM[:, l, m]) * lineshape_FT
+
+    # change numpy.fft to pyfftw
+    Ildm_FT += np.sum((pyfftw.interfaces.numpy_fft.rfft(np.array(LDM), axis=0).transpose(1, 2, 0)) * line_profile_LDM, axis=(0, 1))
+
     # Back in real space:
-    sumoflines_calc = np.fft.irfft(Ildm_FT)[: len(wavenumber_calc)]
-
-    current, peak = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
-    print("apply LDM in loops: current mem: %.6f mb; peak mem: %.6f mb" % (current / (1024 * 1024), peak / (1024 * 1024)))
-
+    sumoflines_calc = pyfftw.interfaces.numpy_fft.irfft(Ildm_FT)[: len(wavenumber_calc)]
     sumoflines_calc /= wstep
     # Get valid range (discard wings)
     sumoflines = sumoflines_calc[woutrange[0]: woutrange[1]]
@@ -421,14 +401,3 @@ def apply_lineshpe_LDM(
     elapsed = time.time() - start
 
     return sumoflines, elapsed
-
-
-def calc_continuum_absorb(wavenumber, h2o_fraction, pressure):
-    # Formula:uih
-    p_H2O = h2o_fraction * pressure     # unit: bar/ 1e3 hpa
-    p_d = (1 - h2o_fraction) * pressure
-    v = wavenumber * c_CGS      # s-1 / hz
-    v = v * 1e-9        # Ghz
-    con_absorbcoeff = (v ** 2) * (THETA ** 3) * (C_O_H2O * (p_H2O ** 2) * (THETA ** n_s) + C_O_d * p_H2O * p_d * (THETA ** n_d))  # dB/km
-    con_absorbcoeff = np.log(con_absorbcoeff / 10, 10)     # cm-1
-    return con_absorbcoeff

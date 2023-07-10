@@ -4,161 +4,85 @@ import seaborn as sns
 from matplotlib import pyplot as plt
 from radis import calc_spectrum
 
-from eq_spectrum import calc_linestrength, calc_lorentz_hwhm, calc_gauss_hwhm, get_spectrum
+from atmosphere import get_atm_gas_data
+from main import get_absorbcoeff
 
 epsilon = 5e-3  # the tolerant difference of the computed parameters between the RADIS library and our code
 
 
-def test_CO2_2380_2400_T1000():
+def test_opt_O2_750_900_T1000():
     print(
         "Testing the computation of Molecule: C02; isotope: 1; wavenum_min = 2380; wavenum_max = 4200; Tgas = 1000"
     )
     # Tref = 296  # unit: K
-    pressure = 1.01325
+    pressure = 1.01325 * 1e5    # unit: pa
     Tgas = 1000  # unit: K
 
-    molecule = "CO2"
+    molecules = "O2"
     isotope = "1"
-    wavenum_min = 2380
-    wavenum_max = 2400
-    mole_fraction = 1
+    wavelength_min = 750
+    wavelength_max = 900
+    mole_fraction = 0.2
     # diluent = {'air': 0}
     wstep = 0.01
 
-    run_test(wavenum_min, wavenum_max, Tgas, pressure, molecule, isotope, mole_fraction, wstep, 0.3)
+    run_test(wavelength_min, wavelength_max, Tgas, pressure, molecules, isotope, mole_fraction, wstep, 0.3)
 
 
-def test_CO_1900_2300_T700():
+def test_opt_COALL_1900_2300_T1000():
     print(
         "Testing the computation of Molecule: C02; isotope: 1; wavenum_min = 2380; wavenum_max = 4200; Tgas = 1000"
     )
-    pressure = 1.01325
+    pressure = 1.01325 * 1e5
     Tgas = 1000  # unit: K
 
     molecule = "CO"
     isotope = "1, 2, 3"
-    wavenum_min = 1900
-    wavenum_max = 2300
+    wavelength_min = 4347
+    wavelength_max = 5263
     mole_fraction = 0.1
     # diluent = {'air': 0.9}
     wstep = 0.01
 
-    run_test(wavenum_min, wavenum_max, Tgas, pressure, molecule, isotope, mole_fraction, wstep, 0.3)
+    run_test(wavelength_min, wavelength_max, Tgas, pressure, molecule, isotope, mole_fraction, wstep, 0.3)
 
 
-def test_COALL_1900_2300_T1000():
-    print(
-        "Testing the computation of Molecule: C0; isotope: 1; wavenum_min = 2380; wavenum_max = 4200; Tgas = 1000"
-    )
-    pressure = 1.01325
-    Tgas = 1000  # unit: K
-
-    molecule = "CO"
-    isotope = "all"
-    wavenum_min = 1900
-    wavenum_max = 2300
-    mole_fraction = 0.1
-    # diluent = {'air': 0.9}
-    wstep = 0.01
-
-    run_test(wavenum_min, wavenum_max, Tgas, pressure, molecule, isotope, mole_fraction, wstep, 0.3)
-
-
-def test_multi_mols_1999_2400():
+def test_opt_multi_mols_1900_2300():
     print(
         "Testing the computation of Molecule: C02; isotope: 1; wavenum_min = 2380; wavenum_max = 4200; Tgas = 1000"
     )
-    pressure = 1.01325
-    Tgas = 700  # unit: K
-
-    molecule = ["CO2", "CO"]
-    isotope = {"CO2": "1,2", "CO": "1,2,3"}
-    wavenum_min = 1999.4547859048316
-    wavenum_max = 2400.3058004755053
-    mole_fraction = {"CO2": 0.1, "CO": 0.2}
-    # diluent = {'air': 0.9}
-    wstep = 0.01
-
-    run_test(wavenum_min, wavenum_max, Tgas, pressure, molecule, isotope, mole_fraction, wstep, 0.1)
-
-
-def test_multi_mols2_1999_2400():
-    print(
-        "Testing the computation of Molecule: C02; isotope: 1; wavenum_min = 2380; wavenum_max = 4200; Tgas = 1000"
-    )
-    pressure = 1.01325
+    pressure = 1.01325 * 1e5
     Tgas = 700  # unit: K
 
     molecule = ["CO2", "CO"]
     isotope = {"CO2": "1", "CO": "3"}
-    wavenum_min = 1999.4547859048316
-    wavenum_max = 2400.3058004755053
+    wavelength_min = 4166
+    wavelength_max = 5263
     mole_fraction = {"CO2": 0.1, "CO": 0.2}
     # diluent = {'air': 0.9}
     wstep = 0.01
 
-    run_test(wavenum_min, wavenum_max, Tgas, pressure, molecule, isotope, mole_fraction, wstep, 0.1)
+    run_test(wavelength_min, wavelength_max, Tgas, pressure, molecule, isotope, mole_fraction, wstep, 0.3)
 
 
-def test_CH4_CO2_11160_11200():
-    print(
-        "Testing the computation of Molecule: C02; isotope: 1; wavenum_min = 2380; wavenum_max = 4200; Tgas = 1000"
-    )
-    pressure = 0.0556
-    Tgas = 500  # unit: K
-
-    molecule = ["CO2", "CH4"]
-    isotope = {"CO2": "3, 4", "CH4": "2"}
-    wavenum_min = 11175
-    wavenum_max = 11200
-    mole_fraction = {"CO2": 0.2, "CH4": 0.1}
-    # diluent = {'air': 0.9}
-    wstep = 0.04
-
-    run_test(wavenum_min, wavenum_max, Tgas, pressure, molecule, isotope, mole_fraction, wstep, 0.1)
-
-
-def test_multi_mols_all_1900_2300():
-    print(
-        "Testing the computation of Molecule: C02; isotope: 1; wavenum_min = 2380; wavenum_max = 4200; Tgas = 1000"
-    )
-    pressure = 1.01325
-    Tgas = 700  # unit: K
-
-    molecule = ["CO2", "CO", "H2O"]
-    isotope = "all"
-    wavenum_min = 1999.4547859048316
-    wavenum_max = 2400.3058004755053
-    mole_fraction = {"CO2": 0.2, "CO": 0.1, "H2O": 0.2}
-    # diluent = {'air': 0.9}
-    wstep = 0.01
-
-    run_test(wavenum_min, wavenum_max, Tgas, pressure, molecule, isotope, mole_fraction, wstep, 0.1)
-
-
-def test_H2O_continuum_1900_2300():
-    print(
-        "Testing the computation of Molecule: C02; isotope: 1; wavenum_min = 2380; wavenum_max = 4200; Tgas = 1000"
-    )
-    pressure = 1.01325
-    Tgas = 700  # unit: K
-
-    molecule = ["CO2", "H2O"]
-    isotope = {"CO2": "1,2", "H2O": "1"}
-    wavenum_min = 1900
-    wavenum_max = 2300
-    mole_fraction = {"CO2": 0.1, "H2O": 0.2}
-    # diluent = {'air': 0.9}
-    wstep = 0.01
-
-    run_test(wavenum_min, wavenum_max, Tgas, pressure, molecule, isotope, mole_fraction, wstep, 0.1)
-
-
-def run_test(wavenum_min, wavenum_max, Tgas, pressure, molecule, isotope, mole_fraction, wstep, path_length):
+def run_test(wavelength_min, wavelength_max, Tgas, pressure, molecule, isotope, mole_fraction, wstep, path_length):
+    """
+        :param wavelength_min: nm
+        :param wavelength_max: nm
+        :param Tgas: K
+        :param pressure: pa
+        :param molecule: str or list
+        :param isotope: str or dict
+        :param mole_fraction: float or dict
+        :param wstep: float
+        :param path_length: float
+    """
     # create validation values
-    s, sf = calc_spectrum(wavenum_min, wavenum_max,
+    pressure_bar = pressure * 1e-5
+    s, sf = calc_spectrum(wavelength_min=wavelength_min,
+                          wavelength_max=wavelength_max,
                           Tgas=Tgas,
-                          pressure=pressure,
+                          pressure=pressure_bar,
                           molecule=molecule,
                           isotope=isotope,
                           mole_fraction=mole_fraction,
@@ -171,24 +95,25 @@ def run_test(wavenum_min, wavenum_max, Tgas, pressure, molecule, isotope, mole_f
                           verbose=False)
 
     muti_mols = (type(molecule) == list)
+    print("test begins!!!!")
 
-    # wavenum_min = sf.input.wavenum_min
-    # wavenum_max = sf.input.wavenum_max
-    abscoeff, wavenumber, df = get_spectrum(wmin=wavenum_min,
-                                            wmax=wavenum_max,
-                                            Tgas=Tgas,
-                                            molecule=molecule,
-                                            isotope=isotope,
-                                            mole_fraction=mole_fraction,
-                                            pressure=pressure,
-                                            wstep=wstep)
+    abscoeff, wavenumber, df = get_absorbcoeff(
+        wavelen_min=wavelength_min,
+        wavelen_max=wavelength_max,
+        Tgas=Tgas,
+        molecule=molecule,
+        isotope=isotope,
+        mol_frac=mole_fraction,
+        pressure=pressure,
+        wstep=wstep
+    )
 
     # if it is the case of multiple molecules, do not compare the separate parameters (S, hwhm)
     # check the line strength S
     if not muti_mols:
         sf_df = sf.df1
         # make sure the wave numbers are the same
-        wav_test = df.wav
+        wav_test = df['wav']
         wav_validation = sf_df.wav
         assert (len(wav_validation) == len(wav_test), "The length of the two parameters are not equal!")
         for i in range(len(df)):
@@ -211,10 +136,6 @@ def run_test(wavenum_min, wavenum_max, Tgas, pressure, molecule, isotope, mole_f
         compare_variable(gauss_hwhm_validation, gauss_hwhm_test, wav_validation, wav_test, "Gaussian HWHM", "cm−1/atm")
 
     # check the absorption coefficient
-    if s is None:
-        assert (abscoeff == 0.0, "get some result but radis found no data??")
-        assert (len(df) == 0.0, "get some data into dataframe but radis found no data??")
-        return
     wavespace_valid = s.get_wavenumber()
     wavespace_test = wavenumber
     assert (len(wavespace_valid) == len(wavespace_test), "The length of the wavespace are not equal!")
@@ -230,6 +151,8 @@ def run_test(wavenum_min, wavenum_max, Tgas, pressure, molecule, isotope, mole_f
 def compare_variable(val_validation, val_test, sf_wav, wav, val_name, val_unit):
     print("Validate the accuracy of " + val_name)
 
+    val_test = np.array(val_test)
+    wav = np.array(wav)
     # compare in numbers
     assert (len(val_test) == len(val_validation), "The length of the two parameters are not equal!")
     for i in range(len(val_test)):
@@ -246,26 +169,24 @@ def comparison_bar_plots(wav_radis, wav_test, y_radis, y_test, y_label, y_unit):
     # draw the relative (error) betwee y_radis and y_test
     relative_error = np.abs((y_test - y_radis) / y_radis)
 
-    axs[0].bar(wav_radis, relative_error, width=0.3, alpha=.7, linewidth=0)
+    axs[0].bar(wav_radis, relative_error, width=0.01)
     axs[0].set_title("Relative error of " + y_label)
     axs[0].set_xlabel('wavenumber (cm-1)')
     axs[0].set_ylabel("rel. err of " + y_label + ' [' + y_unit + ']')
 
     # draw the plots of wav and y_radis/y_test overlapped
     # first smooth the y value
-    smooth_window_size = 30
+    smooth_window_size = 10
     smooth_window_size = np.ones(smooth_window_size) / float(smooth_window_size)
     smooth_y_radis = np.convolve(y_radis, smooth_window_size, 'same')
     smooth_y_test = np.convolve(y_test, smooth_window_size, 'same')
 
     radis_color = np.array([252, 207, 3]) / 255
     test_color = np.array([3, 161, 252]) / 255
-    axs[1].plot(wav_radis, smooth_y_radis, color=tuple(radis_color), linewidth=2.5, label="radis")
-    axs[1].plot(wav_test, smooth_y_test, color=tuple(test_color), linestyle='dashed', linewidth=1, label="test")
+    axs[1].plot(wav_radis, smooth_y_radis, color=tuple(radis_color), linewidth=3, label="radis")
+    axs[1].plot(wav_test, smooth_y_test, color=tuple(test_color), linestyle='dashed', linewidth=1.5, label="test")
     axs[1].set_title("Comparison of " + y_label + " to radis")
     axs[1].set_xlabel('wavenumber (cm-1)')
     axs[1].set_ylabel(y_label + ' [' + y_unit + ']')
     axs[1].legend()
     plt.show()
-
-

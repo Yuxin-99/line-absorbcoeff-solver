@@ -1,14 +1,15 @@
-import drjit as dr
+import matplotlib.pyplot as plt
 import numpy as np
+import seaborn as sns
 import time
 
-from basics import get_molecule_identifier, Tref, pressure_atm, generate_wavenumber_range, get_molar_mass
-from broadening import calc_lorentz_hwhm, calc_gauss_hwhm, calc_lineshape_LDM, apply_lineshpe_LDM, calc_continuum_absorb
+from basics import get_molecule_identifier, Tref, generate_wavenumber_range, get_molar_mass
+from broadening_np_opt import calc_lorentz_hwhm, calc_gauss_hwhm, calc_lineshape_LDM_np_opt, apply_lineshpe_LDM_np_opt
 from constants import c_2, k_b
 from loader import load_hitran
 
 
-def calc_lineshift_opt(df, pressure_mbar):
+def calc_lineshift(df, pressure_mbar):
     """Calculate lineshift due to pressure.
 
     Returns
@@ -26,10 +27,9 @@ def calc_lineshift_opt(df, pressure_mbar):
     See Eq.(A13) in [Rothman-1998]_
     """
 
-    # Calculate
+    start = time.time()
     air_pressure = pressure_mbar / 1013.25  # convert from mbar to atm
 
-    start = time.time()
     if "Pshft" in df.columns:
         df["shiftwav"] = df.wav + (df.Pshft * air_pressure)
     else:
@@ -46,7 +46,7 @@ def calc_lineshift_opt(df, pressure_mbar):
 
 
 # compute S
-def calc_linestrength_opt(df_cols, Tgas, molecule):
+def calc_linestrength(df, Tgas, molecule):
     """References
     ----------
 
@@ -61,7 +61,7 @@ def calc_linestrength_opt(df_cols, Tgas, molecule):
     # compute S based on https://hitran.org/docs/definitions-and-units/#:~:text=Temperature%20dependence%20of%20the%20line%20intensity
     start = time.time()
     df['S'] = (
-            df.int * Qref_Qgas_ratio_opt(df, Tgas, molecule)
+            df.int * Qref_Qgas_ratio(df, Tgas, molecule)
             * (np.exp(-c_2 * df.El * (1 / Tgas - 1 / Tref)))
             * ((1 - np.exp(-c_2 * df.wav / Tgas)) / (1 - np.exp(-c_2 * df.wav / Tref)))
     )
@@ -69,7 +69,7 @@ def calc_linestrength_opt(df_cols, Tgas, molecule):
     return elapsed
 
 
-def Qref_Qgas_ratio_opt(df, Tgas, molecule):
+def Qref_Qgas_ratio(df, Tgas, molecule):
     """Calculate Qref/Qgas at temperature ``Tgas``, ``Tref``, for all lines
     of ``df1``. Returns a single value if all lines have the same Qref/Qgas ratio,
     or a column if they are different
@@ -100,6 +100,7 @@ def Qref_Qgas_ratio_opt(df, Tgas, molecule):
             # if single isotope
             print("There shouldn't be a Column 'iso' with a unique value")
             isotope = int(iso_set)
+
             Q_ref = partitionSum(molecule_id, isotope, Tref)
             Q_gas = partitionSum(molecule_id, isotope, Tgas)
             df.attrs["Qgas"] = Q_gas
@@ -108,16 +109,13 @@ def Qref_Qgas_ratio_opt(df, Tgas, molecule):
 
         else:
             # if multiple isotopes
-            Qref_Qgas_ratio = dr.zeros(len(df_id))
-            mask1 = dr.eq(df_id, molecule_id)
+            Qref_Qgas_ratio_map = {}
+            # {1: 8, 2: 10}
             for iso in iso_set:
-                mask2 = dr.eq(df_iso, iso)
                 Q_ref = partitionSum(molecule_id, iso, Tref)
                 Q_gas = partitionSum(molecule_id, iso, Tgas)
-                dr.select(mask1&mask2, Q_ref / Q_gas, Qref_Qgas_ratio)
-                Qref_Qgas_ratio[iso] = Q_ref / Q_gas
-
-            Qref_Qgas = df["iso"].map(Qref_Qgas_ratio)
+                Qref_Qgas_ratio_map[iso] = Q_ref / Q_gas
+            Qref_Qgas = df["iso"].map(Qref_Qgas_ratio_map)
 
     else:
         # if single isotope
@@ -130,7 +128,7 @@ def Qref_Qgas_ratio_opt(df, Tgas, molecule):
     return Qref_Qgas
 
 
-def get_spectrum_opt(
+def get_spectrum_np_opt(
         wmin,
         wmax,
         Tgas,
@@ -138,7 +136,7 @@ def get_spectrum_opt(
         isotope="all",
         mole_fraction=1.0,
         diluent="air",
-        pressure=pressure_atm,
+        pressure=1.01325,
         wstep=0.01,
         # optimization="simple",
         # broadening_method="fft"
@@ -147,22 +145,24 @@ def get_spectrum_opt(
     :param wmin: the minimum wavenumber, unit: cm-1
     :param wmax: the maximum wavenumber, unit: cm-1
     :param Tgas: the temperature, unit: K
-    :param molecule: the queried molecule(s)
-    :param isotope: the queried isotope(s)
-    :param mole_fraction: the fraction of molecule(s)
-    :param diluent: the dieluent, default (and for now only as) air
+    :param molecule: the queried molecule(s), str or list
+    :param isotope: the queried isotope(s), str or dict
+    :param mole_fraction: the fraction of molecule(s), float or dict
+    :param diluent: the diluent, default (and for now only as) air
     :param pressure: the total gas pressure, unit: bar
 
     """
+    start_time = time.time()
+
     pressure_mbar = pressure * 1e3
 
-    # convert the molecule input as a list
     if type(molecule) != list:
         molecule = [molecule]
 
     molecule_dict = {}
     for mol in molecule:
         molecule_dict[mol] = {}
+
     # convert the isotope according to the molecule input
     if type(isotope) == dict:
         for mol in molecule:
@@ -171,7 +171,7 @@ def get_spectrum_opt(
             else:
                 molecule_dict[mol]["iso"] = isotope[mol]
     else:
-        assert (type(isotope) == str)
+        assert (isinstance(isotope, str))
         for mol in molecule:
             molecule_dict[mol]["iso"] = isotope  # every molecule has the same isotope
 
@@ -182,57 +182,21 @@ def get_spectrum_opt(
 
     if len(molecule) != 1 and type(mole_fraction) != dict:
         raise Exception("When given multiple molecules, please provide the exact mol_fraction of each molecule!!!")
-    elif len(molecule) == 1 and (type(mole_fraction) == float or type(mole_fraction) == int):
+    elif len(molecule) == 1 and (isinstance(mole_fraction, int) or isinstance(mole_fraction, float)):
         molecule_dict[molecule[0]]["mol_fraction"] = mole_fraction
-        diluent_fraction = 1.0 - mole_fraction
-        diluent = {"air": diluent_fraction}
     else:
-        mol_frac_sum = 0.0
         for mol in molecule:
             if mol not in mole_fraction.keys():
                 raise Exception("Error: Missing mole fraction input for the molecule " + mol + "!!!")
             else:
                 molecule_dict[mol]["mol_fraction"] = mole_fraction[mol]
-                mol_frac_sum += mole_fraction[mol]
-        diluent_fraction = 1.0 - mol_frac_sum
-        diluent = {"air": diluent_fraction}
-
-    # download data, and put all molecules & isotopes into one big table
-    df_list = []
-    for mol in molecule_dict.keys():
-        df = load_hitran(
-            wavenum_min=wmin,
-            wavenum_max=wmax,
-            molecule=mol,
-            isotope=molecule_dict[mol]["iso"],
-            drop_column=False
-        )
-        df_list.append(df)
-
-    column_dict = {}
-    # set the column we will need for absorbcoeff computation
-    columns_to_extract = ['id', 'iso', 'EL', 'int', 'wav', 'Tdpair', 'airbrd', 'Tdpsel']
-
-    for df in df_list:
-        for column_name in columns_to_extract:
-            if column_name not in list(df.keys()):
-                continue
-            # Extract the desired column values from each data frame
-            column_values = df[column_name].tolist()
-
-            # Create a DrJIT vector for the column values and store it in the dictionary
-            if column_name not in column_dict:
-                column_dict[column_name] = dr.Vector(column_values)
-            else:
-                # If the column already exists in the dictionary, append the values
-                column_dict[column_name].extend(column_values)
-
-    # compute line strength
 
     # loop through all the molecules
     abscoeff_res = 0.0
+    perf_dict_list = []
     for mol in molecule_dict.keys():
-        abscoeff, wave_number, df, perf_dict = calc_molecule_eq_spectrum_opt(
+        diluent = {"air": 1.0 - molecule_dict[mol]["mol_fraction"]}
+        abscoeff, wave_number, df, perf_dict = calc_molecule_eq_spectrum(
             Tgas,
             pressure_mbar,
             mol,
@@ -246,17 +210,19 @@ def get_spectrum_opt(
         # ARTS: As absorption is additive, the total absorption coefficient is derived by adding up the
         # absorption contributions of all spectral lines of all molecular species.
         abscoeff_res += abscoeff
+        perf_dict_list.append(perf_dict)
 
     # if "H2O" in molecule_dict.keys():
     #     abscoeff_res += calc_continuum_absorb(wave_number, mole_fraction["H2O"], pressure)
 
-    print_perf_opt(perf_dict)
+    total_time = time.time() - start_time
+    print_perf(perf_dict_list, total_time)
 
     # the df here is just the dataframe of the last molecule, might not be used for testing when there are multiple molecules
     return abscoeff_res, wave_number, df
 
 
-def calc_molecule_eq_spectrum_opt(
+def calc_molecule_eq_spectrum(
         Tgas,
         pressure_mbar,
         molecule,
@@ -275,28 +241,33 @@ def calc_molecule_eq_spectrum_opt(
         isotope=isotope,
     )
 
-    perf_dict = {}
+    wavenumber, wavenumber_calc, woutrange = generate_wavenumber_range(wavenum_min, wavenum_max, wstep)
+
+    perf_dict = {"Line strength": 0.0, "Line Shift": 0.0, "Lorentz hwhm": 0.0, "Gaussian hwhm": 0.0,
+                 "Calculate line profile LDM": 0.0, "Apply LDM": 0.0}
+    if len(df) == 0:
+        # TODO: when no data for this molecule, should deal carefully with the related return vals
+        return 0.0, wavenumber, df, perf_dict
 
     # df['S'], unit: cm−1/(molecule·cm−2)
-    S_time = calc_linestrength_opt(df, Tgas, molecule)
+    S_time = calc_linestrength(df, Tgas, molecule)
     perf_dict["Line strength"] = S_time
-    shift_time = calc_lineshift_opt(df, pressure_mbar)
+    shift_time = calc_lineshift(df, pressure_mbar)
     perf_dict["Line Shift"] = shift_time
 
-    # TODO: OPT version
     molar_mass = get_molar_mass(df)  # g/mol
-    # TODO: opt version; mole_fraction
-    lorentz_hwhm_time = calc_lorentz_hwhm(df, Tgas, diluent, mole_fraction)
+    pressure_atm = pressure_mbar / 1013.25
+    lorentz_hwhm_time = calc_lorentz_hwhm(df, Tgas, diluent, mole_fraction, pressure_atm)
     perf_dict["Lorentz hwhm"] = lorentz_hwhm_time
     gauss_hwhm_time = calc_gauss_hwhm(df, Tgas, molar_mass)
     perf_dict["Gaussian hwhm"] = gauss_hwhm_time
 
     # calculate the broadening (line shapes)
-    wavenumber, wavenumber_calc, woutrange = generate_wavenumber_range(wavenum_min, wavenum_max, wstep)
-    line_profile_LDM, wL, wG, wL_dat, wG_dat, calc_ldm_time = calc_lineshape_LDM(df, wstep, wavenumber_calc)
+    w_lineshape_ft = np.fft.rfftfreq(2 * len(wavenumber_calc), wstep)
+    line_profile_LDM, wL, wG, wL_dat, wG_dat, calc_ldm_time = calc_lineshape_LDM_np_opt(df, w_lineshape_ft)
     perf_dict["Calculate line profile LDM"] = calc_ldm_time
-    # commpute S * F, unit of the convolution result: 1/(molecule·cm−2)
-    sumoflines, apply_time = apply_lineshpe_LDM(
+    # compute S * F, unit of the convolution result: 1/(molecule·cm−2)
+    sumoflines, apply_time = apply_lineshpe_LDM_np_opt(
         df['S'],
         wavenumber,
         wavenumber_calc,
@@ -310,21 +281,18 @@ def calc_molecule_eq_spectrum_opt(
         wG_dat
     )
     perf_dict["Apply LDM"] = apply_time
-    perf_dict["total"] = 0.0
-    for key in perf_dict:
-        perf_dict["total"] += perf_dict[key]
 
     # incorporate density of molecules (number of absorbing particles / cm³)
     # mole_fraction is the weight of the abscoeff of this molecule
     density = mole_fraction * ((pressure_mbar * 100) / (k_b * Tgas)) * 1e-6
     # n * S * F, unit: cm-1
     abscoeff = density * sumoflines
-    print("done!")
+    # print("done!")
 
     return abscoeff, wavenumber, df, perf_dict
 
 
-def print_perf_opt(perf_dict_list):
+def print_perf(perf_dict_list, total_time):
     TAB = 4
 
     perf_sum_dict = {}
@@ -335,8 +303,28 @@ def print_perf_opt(perf_dict_list):
         for perf_dict in perf_dict_list:
             perf_sum_dict[key] += perf_dict[key]
 
-    print("Calculation time of the absorption coefficient: %.5f s. \n" % perf_sum_dict["total"])
+    print("Calculation time of the absorption coefficient (optimization using Numpy): %.5f s. \n" % total_time)
     for key, value in perf_sum_dict.items():
-        if key != "total":
-            print(" " * TAB + key + ": %.5f s. \n" % value)
+        print(" " * TAB + key + ": %.5f s. \n" % value)
+
+
+def plot_absorb_coeff(x, y, x_label, y_label, title, smooth_window_size=5):
+    sns.set_theme()
+    smooth_window_size = np.ones(smooth_window_size) / float(smooth_window_size)
+    smooth_y = np.convolve(y, smooth_window_size, 'same')
+
+    # plot the original data and the smoothed data
+    fig, ax = plt.subplots()
+
+    # set the plot title and axis labels
+    ax.plot(x, smooth_y)
+    ax.set_title(title)
+    ax.set_xlabel(x_label)
+    ax.set_ylabel(y_label)
+
+    # display the legend
+    ax.legend()
+
+    plt.show()
+
 

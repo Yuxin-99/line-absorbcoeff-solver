@@ -1,3 +1,9 @@
+'''
+Code based on Radis Source code "radis.lbl.base", "radis.lbl.factory"
+'''
+
+import drjit as dr
+import mitsuba as mi
 import numpy as np
 import pandas as pd
 
@@ -70,8 +76,8 @@ HITRAN_MOLECULES = list(trans.values())
 
 # parameters used in current test settings
 Tref = 296      # unit: K
-pressure_mbar = 1013.25     # unit: mbar
-pressure_atm = pressure_mbar / 1e3      # unit: bar/ 1e5 pa / 1e3 hpa
+# pressure_mbar = 1013.25     # unit: mbar
+# pressure_atm = pressure_mbar / 1e3      # unit: bar/ 1e5 pa / 1e3 hpa
 
 
 drop_columns = ['ierr', 'iref', 'lmix', 'gpp']
@@ -99,11 +105,6 @@ def read_mol_mass_df(file):
     df = pd.read_csv(file, comment="#", delim_whitespace=True)
     df = df.set_index(["id", "iso"])
 
-    # self.terrestrial_abundances = terrestrial_abundances
-    # self.extra_molparams = {}
-    #
-    # if extra_file_json is not None:
-    #     self.extra_molparams.update(get_extra_molparams(extra_file_json))
     return df
 
 
@@ -118,7 +119,7 @@ def get_molecule_identifier(molecule_name):
 
     Parameters
     ----------
-    molecular_formula : str
+    molecule_name : str
         The string describing the molecule.
 
     Returns
@@ -228,6 +229,13 @@ def get_indices(arr_i, axis):
     return index, index + 1, pos - index
 
 
+def dr_get_indices(arr_i, axis):
+    # TODO: drjit version
+    pos = np.interp(arr_i, axis, np.arange(axis.size))
+    index = pos.astype(np.int32)
+    return index, index + 1, pos - index
+
+
 def get_molar_mass(df):
     """Returns molar mass for all lines of DataFrame ``df``.
 
@@ -261,6 +269,49 @@ def get_molar_mass(df):
         iso = df.attrs["iso"]
         molar_mass = molparam_df.loc[(molecule, iso), "molar_mass"]
 
+    return molar_mass
+
+
+def dr_get_molar_mass(dfcolumn_dict, molecule, isotope, num_of_lines):
+    """Returns molar mass for all lines of DataFrame ``df``.
+
+    Parameters
+    ----------
+    dfcolumn_dict: dataFrame in dictionary of mitsuba array format
+    molecule: molecule set of all molecule ids
+    isotope: iso set of all isotopes
+    num_of_lines: total number of lines (length of the dfcolumn_dict)
+
+    Returns
+    -------
+    The molar mass of all the isotopes in the dataframe
+
+    """
+    # case1: only one molecule
+    if len(molecule) == 1:
+        molecule_id = molecule[0]
+        if len(isotope) == 1:
+            molar_mass = molparam_df.loc[(molecule_id, isotope[0]), "molar_mass"]
+        else:
+            molar_mass = dr.ones(mi.Float64, num_of_lines)
+            for iso in isotope:
+                mask = dr.eq(dfcolumn_dict["iso"], iso)
+                mass = molparam_df.loc[(molecule_id, iso), "molar_mass"]
+                molar_mass = dr.select(mask, mass, molar_mass)
+        return molar_mass
+
+    # case 2: multiple molecules
+    molar_mass = dr.ones(mi.Float64, num_of_lines)
+    for molecule_id in molecule:
+        mask_mol = dr.eq(dfcolumn_dict["id"], molecule_id)
+        for iso in isotope:
+            mask_iso = dr.eq(dfcolumn_dict["iso"], iso)
+            mask = mask_mol & mask_iso
+            if mask == False:
+                # there is no line data for this combination (molecule_id & iso)
+                continue
+            mass = molparam_df.loc[(molecule_id, iso), "molar_mass"]
+            molar_mass = dr.select(mask, mass, molar_mass)
     return molar_mass
 
 
@@ -305,6 +356,7 @@ def generate_wavenumber_range(wavenum_min, wavenum_max, wstep, neighbour_lines=0
     # ... Calculation range
     wavenum_min_calc = wavenumber[0] - neighbour_lines  # cm-1
     wavenum_max_calc = wavenumber[-1] + neighbour_lines  # cm-1
+    # TODO: drjit version arange?
     w_out_of_range_left = arange(
         wavenumber[0] - wstep, wavenum_min_calc - wstep, -wstep
     )[::-1]
@@ -323,5 +375,75 @@ def generate_wavenumber_range(wavenum_min, wavenum_max, wstep, neighbour_lines=0
 
     assert len(w_out_of_range_left) == len(w_out_of_range_right)
     assert len(wavenumber_calc) == len(wavenumber) + 2 * len(w_out_of_range_left)
+
+    return wavenumber, wavenumber_calc, woutrange
+
+
+def dr_generate_wavenumber_range(wavenum_min, wavenum_max, wstep, neighbour_lines=0):
+    """define waverange vectors, with ``wavenumber`` the output spectral range
+    and ``wavenumber_calc`` the spectral range used for calculation, that
+    includes neighbour lines within ``neighbour_lines`` distance.
+
+    Parameters
+    ----------
+    wavenum_min, wavenum_max: float
+        wavenumber range limits (cm-1)
+    wstep: float
+        wavenumber step (cm-1)
+    neighbour_lines: float
+        wavenumber full width of broadening calculation: used to define which
+        neighbour lines shall be included in the calculation
+        only consider the case as 0 for now
+
+    Returns
+    -------
+    wavenumber: numpy array
+        an evenly spaced array between ``wavenum_min`` and ``wavenum_max`` with
+        a spacing of ``wstep``
+    wavenumber_calc: numpy array
+        an evenly spaced array between ``wavenum_min-neighbour_lines`` and
+        ``wavenum_max+neighbour_lines`` with a spacing of ``wstep``
+    woutrange: (wmin, wmax)
+        index to project the full range including neighbour lines `wavenumber_calc`
+        on the final range `wavenumber`, i.e. : wavenumber_calc[woutrange[0]:woutrange[1]] = wavenumber
+    """
+    assert wavenum_min < wavenum_max
+    assert wstep > 0
+
+    # not consider the case of wstep = 'auto' for now
+
+    # Output range
+    # generate the final vector of wavenumbers (shape M)
+    wavenumber = dr.arange(dtype=mi.Float64, start=wavenum_min, stop=wavenum_max + wstep, step=wstep)
+
+    # generate the calculation vector of wavenumbers (shape M + space on the side)
+    # ... Calculation range
+    wavenum_min_calc = wavenumber[0] - neighbour_lines  # cm-1
+    wavenum_max_calc = wavenumber[-1] + neighbour_lines  # cm-1
+    w_out_of_range_left = dr.arange(
+        dtype=mi.Float64, start=wavenumber[0] - wstep, stop=wavenum_min_calc - wstep, step=-wstep
+    )[::-1]
+    w_out_of_range_right = dr.arange(
+        dtype=mi.Float64, start=wavenumber[-1] + wstep, stop=wavenum_max_calc + wstep, step=wstep
+    )
+
+    # ... deal with rounding errors: 1 side may have 1 more point
+    if len(w_out_of_range_left) > len(w_out_of_range_right):
+        w_out_of_range_left = w_out_of_range_left[1:]
+    elif len(w_out_of_range_left) < len(w_out_of_range_right):
+        w_out_of_range_right = w_out_of_range_right[:-1]
+
+    len_wavenum = len(wavenumber)
+    len_left = len(w_out_of_range_left)
+    len_right = len(w_out_of_range_right)
+
+    wavenumber_calc = dr.zeros(mi.Float64, len_left + len_wavenum + len_right)
+    wavenumber_calc[:len_left] = w_out_of_range_left
+    wavenumber_calc[len_left:(len_left + len_wavenum)] = wavenumber
+    wavenumber_calc[(len_left + len_wavenum):] = w_out_of_range_right
+    woutrange = len_left, len_left + len_wavenum
+
+    assert len_left == len_right
+    assert len(wavenumber_calc) == len_wavenum + 2 * len_left
 
     return wavenumber, wavenumber_calc, woutrange

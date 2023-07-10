@@ -7,6 +7,7 @@ Note : more units available in :
 
 
 -------------------------------------------------------------------------------
+Code based on Radis Source code "radis.phys.constants"
 """
 
 # %% SI units

@@ -27,14 +27,5 @@ def get_atm_gas_data(level):
     return pressure, temperature, molecules, mole_fraction
 
 
-# p, t, f = get_atm_gas_data(50)
-# mole frac: mixing ratio
-# iso: all
-# loop through all altitudes
-# save unweighted/weighted abscoeff:
-#   120 x 7 x wavelength table
-#   mole_fraction table
+# get_atm_gas_data(20)
 
-# 紫外线到红外线的range, infrared
-
-# multiply/add: DrJit fma

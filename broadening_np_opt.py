@@ -1,8 +1,6 @@
-"""
-Code based on Radis Source code "radis.lbl.broadening"
-"""
-
 import numpy as np
+import pyfftw
+import sys
 import time
 import tracemalloc
 
@@ -156,7 +154,7 @@ def calc_voigt_ft(w_lineshape_ft, hwhm_gauss, hwhm_lorentz):
     return IG_FT * IL_FT
 
 
-def calc_lineshape_LDM(df, wstep, wavenumber_calc):
+def calc_lineshape_LDM_np_opt(df, w_lineshape_ft):
     """
     LDM: line density map (https://github.com/radis/radis/issues/37)
 
@@ -193,31 +191,52 @@ def calc_lineshape_LDM(df, wstep, wavenumber_calc):
 
     # Calculate the Lineshape
     # -----------------------
+    # Get all combinations of Voigt lineshapes (in Fourier space)
+    wg_len = len(wG)
+    wl_len = len(wL)
+    w_lineshape_ft_len = len(w_lineshape_ft)
+    tracemalloc.start()
+    ''' do an outer product of w_lineshape_ft[w] and wG[len(wG)] to get [len(wg) x w] 2d array'''
+    # gauss_outer_prod_start = time.time()
+    gauss_out_prod = np.outer(wG/2, w_lineshape_ft)
+    gauss_profile = np.exp(-((2 * np.pi * gauss_out_prod) ** 2) / (4 * np.log(2)))  # shape: wg x w
+    # print("size of gauss 2d: %.6f mb" % (sys.getsizeof(gauss_profile)/(1024*1024)))
+    # gauss_outer_prod_elapsed = time.time() - gauss_outer_prod_start
+    # print("Calculation time of gauss_outer_prod: %.5f s. \n" % gauss_outer_prod_elapsed)
 
-    line_profile_LDM = {}
-    # broadening_method = self.params.broadening_method         # only consider "fft" for now
-    # Unlike real space methods ('convolve', 'voigt'), here we calculate
-    # the lineshape on the full spectral range.
-    w = wavenumber_calc
-    w_lineshape_ft = np.fft.rfftfreq(
-        2 * len(w), wstep
-    )  # TO-DO: add  + self.misc.zero_padding
+    ''' do an outer product of w_lineshape_ft[w] and wL[len(wL)] to get [len(wL) x w] 2d array'''
+    # lorentz_outer_prod_start = time.time()
+    lorentz_out_prod = np.outer(wL / 2, w_lineshape_ft)
+    lorentz_profile = np.exp(-2 * np.pi * lorentz_out_prod)  # shape: wl x w
+    # print("size of lorentz 2d: %.6f mb" % (sys.getsizeof(lorentz_profile)/(1024*1024)))
+    # lorentz_outer_prod_elapsed = time.time() - lorentz_outer_prod_start
+    # print("Calculation time of lorentz_outer_prod: %.5f s. \n" % lorentz_outer_prod_elapsed)
+
+    '''stack the 2d arrays corresponding to lorentz and gauss to get a 3d array[wg x wl x w]'''
+    # stack_start = time.time()
+    # gauss_3d_profile = np.repeat(gauss_profile[:, np.newaxis, :], wl_len, axis=1)
+    # lorentz_3d_profile = np.repeat(lorentz_profile[np.newaxis, :, :], wg_len, axis=0)
+    # print("size of 3d matrices: %.6f" % (sys.getsizeof(lorentz_3d_profile)/(1024*1024)))
+    # stack_elapsed = time.time() - stack_start
+    # print("Calculation time of stack 2d arrays: %.5f s. \n" % stack_elapsed)
 
     # Get all combinations of Voigt lineshapes (in Fourier space)
-    tracemalloc.start()
-    for l in range(len(wG)):
-        line_profile_LDM[l] = {}
-        for m in range(len(wL)):
-            line_profile_LDM[l][m] = calc_voigt_ft(
-                w_lineshape_ft, wG[l] / 2, wL[m] / 2
-            )  # compute the effect of hwhm to the line shape in fourier space directly
-
+    # combine_start = time.time()
+    line_profile_LDM = np.zeros((wg_len, wl_len, w_lineshape_ft_len))    # shape: wg x wl x w
+    for l in range(wg_len):
+        for m in range(wl_len):
+            # compute the effect of hwhm to the line shape in fourier space directly
+            line_profile_LDM[l][m] = gauss_profile[l] * lorentz_profile[m]
             # normalization based on the fourier frequency of 0
             line_profile_LDM[l][m] /= line_profile_LDM[l][m][0]
 
+    # combine_elapsed = time.time() - combine_start
+    # print("Calculation time of multiplying two 3d arrays and normalization: %.5f s. \n" % combine_elapsed)
+
     current, peak = tracemalloc.get_traced_memory()
     tracemalloc.stop()
-    print("calc LDM in loops: current mem: %.6f mb; peak mem: %.6f mb" % (current / (1024 * 1024), peak / (1024 * 1024)))
+    print("calc LDM: current mem: %.6f mb; peak mem: %.6f mb" % (current / (1024 * 1024), peak / (1024 * 1024)))
+
     elapsed = time.time() - start
     return line_profile_LDM, wL, wG, wL_dat, wG_dat, elapsed
 
@@ -255,7 +274,7 @@ def add_at_ldm(LDM, k, l, m, I):
     return np.add.at(LDM, (k, l, m), I)
 
 
-def apply_lineshpe_LDM(
+def apply_lineshpe_LDM_np_opt(
         broadened_param,
         wavenumber,
         wavenumber_calc,
@@ -293,10 +312,6 @@ def apply_lineshpe_LDM(
         FWHM of all lines. Used to lookup the LDM
     wG_dat: array    (size N)
         FWHM of all lines. Used to lookup the LDM
-    optimization :
-        if ``"min-RMS"`` weights optimized by analytical minimization of the RMS-error.
-        Otherwise, weights equal to their relative position in the grid.
-        Only consider the case of "simple" for now
 
     Returns
     -------
@@ -323,15 +338,6 @@ def apply_lineshpe_LDM(
     broadening_method = "fft"  # only consider the case of "fft" for now
 
     # Get add-at method
-    # ... 1. allow user to use non-cython method (useful for tests ?)
-    # ... 2. write in the Spectrum object whether Cython was used or not
-    # ...    (either because deactivated, or because not installed)
-    # if self.use_cython and add_at != numpy_add_at:
-    #     _add_at = add_at
-    #     self.misc.add_at_used = "cython"
-    # else:
-    #     _add_at = numpy_add_at
-    #     self.misc.add_at_used = "numpy"
     _add_at = add_at_ldm
     # Vectorize the chunk of lines
     S = broadened_param
@@ -365,20 +371,7 @@ def apply_lineshpe_LDM(
     # ... Initialize array on which to distribute the lineshapes
     if broadening_method in ["voigt", "convolve"]:
         print("not considered ")
-        # if self.params.sparse_ldm == True:
-        #     # LDM is constructed in a sparse-way later
-        #     pass
-        # else:
-        #     LDM = np.zeros((len(wavenumber_calc) + 2, len(wG), len(wL)))
-        #     # +2 to allocate one empty grid point on each side : case where a line is on the boundary
-        #     ki0 += 1
-        #     ki1 += 1
     elif broadening_method == "fft":
-        # if self.params.sparse_ldm == True:
-        #     if self.verbose >= 2:
-        #         print(
-        #             "SPARSE optimisation not implemented with 'fft' mode. Use 'voigt' for analytical voigt, or radis.config['SPARSE_WAVERANGE'] = False"
-        #         )
         LDM = np.zeros(
             (
                 2 * len(wavenumber_calc),  # TO-DO: Add  + self.misc.zero_padding
@@ -403,16 +396,35 @@ def apply_lineshpe_LDM(
     # ... Initialize array in FT space
     Ildm_FT = 1j * np.zeros(len(line_profile_LDM[0][0]))
     tracemalloc.start()
-    for l in range(len(wG)):
-        for m in range(len(wL)):
-            lineshape_FT = line_profile_LDM[l][m]
-            Ildm_FT += np.fft.rfft(LDM[:, l, m]) * lineshape_FT
+
+    # rfft_start = time.time()
+    print("size of LDM: %.6f mb" % (sys.getsizeof(LDM) / (1024 * 1024)))
+    rrft_LDM = pyfftw.interfaces.numpy_fft.rfft(np.array(LDM), axis=0)
+    print("size of rfft on 3d LDM: %.6f mb" % (sys.getsizeof(rrft_LDM) / (1024 * 1024)))
+    # rfft_elapsed = time.time() - rfft_start
+    # print("Calculation time of rfft on the 3d array LDM along axis: %.5f s. \n" % rfft_elapsed)
+
+    rrft_LDM = rrft_LDM.transpose(1, 2, 0)
+
+    # convolve_start = time.time()
+    convolved_line_profile_LDM = rrft_LDM * line_profile_LDM
+    print("size of 3d convolution: %.6f mb" % (sys.getsizeof(convolved_line_profile_LDM) / (1024 * 1024)))
+
+    # convolve_elapsed = time.time() - convolve_start
+    # print("Calculation time of convolving rrft_LDM and line_profile_LDM: %.5f s. \n" % convolve_elapsed)
+
+    Ildm_FT += np.sum(convolved_line_profile_LDM,
+                      axis=(0, 1))
+
     # Back in real space:
-    sumoflines_calc = np.fft.irfft(Ildm_FT)[: len(wavenumber_calc)]
+    # irrft_start = time.time()
+    sumoflines_calc = pyfftw.interfaces.numpy_fft.irfft(Ildm_FT)[: len(wavenumber_calc)]
+    # irrft_elapsed = time.time() - irrft_start
+    # print("Calculation time of reversing sum of lines irfft: %.5f s. \n" % irrft_elapsed)
 
     current, peak = tracemalloc.get_traced_memory()
     tracemalloc.stop()
-    print("apply LDM in loops: current mem: %.6f mb; peak mem: %.6f mb" % (current / (1024 * 1024), peak / (1024 * 1024)))
+    print("apply LDM: current mem: %.6f mb; peak mem: %.6f mb" % (current / (1024 * 1024), peak / (1024 * 1024)))
 
     sumoflines_calc /= wstep
     # Get valid range (discard wings)
@@ -422,13 +434,3 @@ def apply_lineshpe_LDM(
 
     return sumoflines, elapsed
 
-
-def calc_continuum_absorb(wavenumber, h2o_fraction, pressure):
-    # Formula:uih
-    p_H2O = h2o_fraction * pressure     # unit: bar/ 1e3 hpa
-    p_d = (1 - h2o_fraction) * pressure
-    v = wavenumber * c_CGS      # s-1 / hz
-    v = v * 1e-9        # Ghz
-    con_absorbcoeff = (v ** 2) * (THETA ** 3) * (C_O_H2O * (p_H2O ** 2) * (THETA ** n_s) + C_O_d * p_H2O * p_d * (THETA ** n_d))  # dB/km
-    con_absorbcoeff = np.log(con_absorbcoeff / 10, 10)     # cm-1
-    return con_absorbcoeff
