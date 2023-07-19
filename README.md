@@ -13,6 +13,8 @@ Go to the **main.py**, in the fucntion **main()** either read the inputs from ge
 
 Test examples of the computation is in the tests folder.
 
+For the final presentation of this project, please open "Line-by-line-solver/website/index.html"
+
 ### Remarks
 To make sure the program is able to reach the data at the correct location, please check:
 - the path to the file **"molparam.txt"** which contains the molar mass of molecules in **"basics.py"** is the correct path in your machine
